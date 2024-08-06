@@ -1,24 +1,22 @@
-import asyncio
 import logging
-from flask import Flask, request
+import asyncio
+from quart import Quart, request
 from telegram import Update
 from src.bot.telegram_bot import setup_bot
 from src.bot.message_handler import handle_message
 
-app = Flask(__name__)
+app = Quart(__name__)
 bot = setup_bot()
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 @app.route(f'/{bot.token}', methods=['POST'])
-def webhook():
-    logging.info('Webhook called')
-    logging.debug(f"Request headers: {request.headers}")
-    logging.debug(f"Request data: {request.data}")
+async def webhook():
     try:
-        update = Update.de_json(request.get_json(), bot)
+        update = Update.de_json(await request.get_json(), bot)
         logging.debug(f"Update: {update}")
-        asyncio.run(handle_message(update, None))
+        await handle_message(update)
+        logging.info('handle_message executed')
     except Exception as e:
         logging.error(f"Error handling webhook: {e}")
     return 'OK'

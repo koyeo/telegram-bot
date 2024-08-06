@@ -2,7 +2,7 @@ import csv
 import os
 import logging
 
-def save_to_csv(details):
+async def save_to_csv(details):
     if not os.path.exists('data'):
         os.makedirs('data')
     
@@ -10,8 +10,6 @@ def save_to_csv(details):
     file_exists = os.path.isfile(filepath)
 
     logging.info(f"Saving details to CSV: {details}")
-    logging.debug(f"CSV file path: {filepath}")
-    logging.debug(f"CSV file exists: {file_exists}")
 
     try:
         with open(filepath, 'a', newline='', encoding='utf-8') as csvfile:

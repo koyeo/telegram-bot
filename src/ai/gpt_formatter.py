@@ -1,5 +1,6 @@
 import os
 import openai
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,14 +22,19 @@ def format_message_with_gpt(message_text, message_date):
 
     Formatted Output:
     """
-
-    response = openai.Completion.create(
-        engine="gpt-4o-mini	",
-        prompt=prompt,
-        max_tokens=2000,
-        n=1,
-        stop=None,
-        temperature=0.5,
-    )
-
-    return response.choices[0].text.strip()
+    
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=2000,
+            temperature=0.5,
+        )
+        logging.info(f"OpenAI response: {response}")
+        return response['choices'][0]['message']['content'].strip()
+    except openai.error.OpenAIError as e:
+        logging.error(f"OpenAI API error: {str(e)}")
+        return None

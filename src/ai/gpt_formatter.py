@@ -1,15 +1,12 @@
 import os
 import openai
 import logging
-from dotenv import load_dotenv
 
-load_dotenv()
-
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = openai.OpenAI()
 
 def format_message_with_gpt(message_text, message_date):
     prompt = f"""
-    Format the following Telegram message into a structured format with these fields:
+    Format the blurb from this Telegram message into a structured format with these fields:
     - Deal ID: Name of the project or company that the message is about
     - Description: A brief summary of the message content
     - Website: Website link if included
@@ -24,17 +21,23 @@ def format_message_with_gpt(message_text, message_date):
     """
     
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": "You are a helpful assistant who will sort through all of the venture deals that are sent to me. You will sift through the blurbs that are sent and identify key information."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=2000,
             temperature=0.5,
         )
         logging.info(f"OpenAI response: {response}")
-        return response['choices'][0]['message']['content'].strip()
-    except openai.error.OpenAIError as e:
-        logging.error(f"OpenAI API error: {str(e)}")
-        return None
+        return response.choices[0].message.content
+    except openai.APIConnectionError as e:
+        logging.error("The server could not be reached")
+        logging.error(e.__cause__)  # an underlying Exception, likely raised within httpx.
+    except openai.RateLimitError as e:
+        logging.error("A 429 status code was received; we should back off a bit.")
+    except openai.APIStatusError as e:
+        logging.error("Another non-200-range status code was received")
+        logging.error(e.status_code)
+        logging.error(e.response)

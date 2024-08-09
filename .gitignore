@@ -19,3 +19,6 @@ Thumbs.db
 # Project specific
 data/telegram_messages.csv
 config/config.yaml
+
+# Private keys
+*.pem

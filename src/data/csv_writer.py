@@ -13,7 +13,7 @@ async def save_to_csv(details):
 
     try:
         with open(filepath, 'a', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['Deal ID', 'Description', 'Website', 'Deck', 'Fundraise Amount($USD)', 'Valuation', 'Date', 'CMT Owner']
+            fieldnames = ['Deal ID', 'Description', 'Website', 'Deck', 'Fundraise Amount($USD)', 'Valuation', 'Date', 'CMT Owner', 'Source']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
             if not file_exists:

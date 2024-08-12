@@ -14,6 +14,7 @@ def format_message_with_gpt(message_text, message_date):
     - Fundraise Amount($USD): The amount in $X,XXX,XXX format if it is included; otherwise leave blank
     - Valuation: The project valuation in $X,XXX,XXX format if it is included; otherwise leave blank
     - Date: {message_date}
+    - CMT Owner: CMT investor who sent the deal (program will find this automatically)
 
     Message: {message_text}
 

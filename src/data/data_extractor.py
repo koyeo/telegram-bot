@@ -20,6 +20,8 @@ def extract_details(message: Message):
         content_dict[key.strip()] = value.strip()
     
     logging.info(f"Parsed content_dict: {content_dict}")
+
+    cmt_owner = f"{message.from_user.first_name} {message.from_user.last_name}"
     
     return {
         'Deal ID': content_dict.get('- Deal ID', ''),
@@ -28,5 +30,6 @@ def extract_details(message: Message):
         'Deck': content_dict.get('- Deck', ''),
         'Fundraise Amount($USD)': content_dict.get('- Fundraise Amount($USD)', ''),
         'Valuation': content_dict.get('- Valuation', ''),
-        'Date': content_dict.get('- Date', message.date.strftime("%Y-%m-%d"))
+        'Date': content_dict.get('- Date', message.date.strftime("%Y-%m-%d")),
+        'CMT Owner': cmt_owner
     }

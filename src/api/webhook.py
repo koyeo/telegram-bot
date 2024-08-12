@@ -1,9 +1,7 @@
 import logging
-import asyncio
 from quart import Quart, request
 from telegram import Update
 from src.bot.telegram_bot import setup_bot
-from src.bot.message_handler import handle_message
 
 app = Quart(__name__)
 bot = setup_bot()
@@ -15,8 +13,8 @@ async def webhook():
     try:
         update = Update.de_json(await request.get_json(), bot)
         logging.debug(f"Update: {update}")
-        await handle_message(update)
-        logging.info('handle_message executed')
+        await bot.application.update_queue.put(update)
+        logging.info('Message added to queue')
     except Exception as e:
         logging.error(f"Error handling webhook: {e}")
     return 'OK'

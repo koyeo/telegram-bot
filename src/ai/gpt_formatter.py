@@ -4,17 +4,23 @@ import logging
 
 client = openai.OpenAI()
 
-def format_message_with_gpt(message_text, message_date):
+def format_message_with_gpt(message_text):
     prompt = f"""
     Format the blurb from this Telegram message into a structured format with these fields:
-    - Deal ID: Name of the project or company that the message is about
-    - Description: A brief summary of the message content
+    - Deal ID: Leave blank
+    - Account Name / PortCo: Name of the project or company that the message is about
+    - Record Type ID: Should always be hardcoded as "012Dm0000012ZYDIA2"
+    - Deal Name: Should be in format <Company/project name> - <round i.e., Seed, Pre-Seed, Series A (leave blank if not avail)> - <current year>
+    - Stage: Should always be hardcoded as "New"
+    - Account Description: A brief summary of the message content
     - Website: Website link if included
     - Deck: Link to the pitch deck if included
     - Fundraise Amount($USD): The amount in $X,XXX,XXX format if it is included; otherwise leave blank
-    - Valuation: The project valuation in $X,XXX,XXX format if it is included; otherwise leave blank
-    - Date: {message_date}
-    - CMT Owner: CMT investor who sent the deal (program will find this automatically)
+    - Equity Valuation/Cap: The project equity valuation in $X,XXX,XXX format if it is included; otherwise leave blank
+    - Token Valuation: The project token valuation in $X,XXX,XXX format if it is included; otherwise leave blank
+    - CMT Relationship Owner: CMT investor who sent the deal (program will find this automatically)
+    - Sharepoint Link: Leave blank
+    - Round: i.e., Seed, Pre-Seed, Series A, etc.. if included; otherwise leave blank
 
     Message: {message_text}
 

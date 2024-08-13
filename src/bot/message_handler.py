@@ -17,28 +17,16 @@ async def handle_message(update: Update, context):
             logging.info("Command received, skipping handle_message")
             return  # Ignore commands in this handler
 
-        source = "Unknown"
-        if hasattr(message, 'forward_sender_name') and message.forward_sender_name:
-            source = f"{message.forward_sender_name}"
-        elif hasattr(message, 'forward_from') and message.forward_from:
-            source = f"{message.forward_from.first_name} {message.forward_from.last_name or ''}".strip()
-        elif hasattr(message, 'forward_origin') and message.forward_origin:
-            if hasattr(message.forward_origin, 'sender_user') and message.forward_origin.sender_user:
-                source = f"{message.forward_origin.sender_user.first_name} {message.forward_origin.sender_user.last_name or ''}".strip()
-            elif hasattr(message.forward_origin, 'sender_user_name') and message.forward_origin.sender_user_name:
-                source = f"{message.forward_origin.sender_user_name}"
-
         details = extract_details(message)
         if details:
-            details['Source'] = source
             await save_to_csv(details)
-            await context.bot.send_message(chat_id=message.chat_id, text="Investment details received, processed, and saved.")
-            logging.info(f"Details saved to CSV with source: {source}")
+            await context.bot.send_message(chat_id=message.chat_id, text="Deal details received, processed, and saved.")
+            logging.info(f"Details saved to CSV")
         else:
-            await context.bot.send_message(chat_id=message.chat_id, text="Error processing investment details. Please try again later.")
+            await context.bot.send_message(chat_id=message.chat_id, text="Error processing deal details. Please try again later.")
             logging.error("Error: Details were not extracted.")
     else:
-        await context.bot.send_message(chat_id=message.chat_id, text="Please send a text message with investment details.")
+        await context.bot.send_message(chat_id=message.chat_id, text="Please send a text message with deal details.")
     logging.info("handle_message completed")
 
 async def export_csv(update: Update, context):

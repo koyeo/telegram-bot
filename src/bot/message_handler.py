@@ -8,6 +8,13 @@ from src.bot.telegram_bot import setup_bot
 
 bot = setup_bot()
 
+# Define the expected fields
+EXPECTED_FIELDS = [
+    'Deal ID', 'Account Name / PortCo', 'Deal Name', 'Stage', 'Account Description',
+    'Website', 'Deck', 'Fundraise Amount($USD)', 'Equity Valuation/Cap', 'Token Valuation',
+    'Round', 'Deal Source'
+]
+
 async def handle_message(update: Update, context):
     logging.info("handle_message started")
     message = update.message
@@ -19,9 +26,18 @@ async def handle_message(update: Update, context):
 
         details = await extract_details(message, bot)
         if details:
+            missing_fields = [field for field in EXPECTED_FIELDS if not details.get(field)]
+            
             await save_to_csv(details)
-            await context.bot.send_message(chat_id=message.chat_id, text="Deal details received, processed, and saved.")
-            logging.info(f"Details saved to CSV")
+            
+            if missing_fields:
+                missing_fields_str = ", ".join(missing_fields)
+                response = f"Deal details processed and saved, but the following fields were missing or empty: {missing_fields_str}"
+            else:
+                response = "All deal details successfully received, processed, and saved."
+            
+            await context.bot.send_message(chat_id=message.chat_id, text=response)
+            logging.info(f"Details saved to CSV. Missing fields: {missing_fields}")
         else:
             await context.bot.send_message(chat_id=message.chat_id, text="Error processing deal details. Please try again later.")
             logging.error("Error: Details were not extracted.")

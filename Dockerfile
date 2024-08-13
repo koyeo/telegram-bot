@@ -1,20 +1,24 @@
-# Use an official Python runtime as the base image
 FROM python:3.9-slim
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container
 COPY requirements.txt .
 
-# Install the required packages
-RUN pip install --no-cache-dir -r requirements.txt
+# Install required dependencies and Tesseract
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    libgl1-mesa-glx \
+    libjpeg-dev \
+    zlib1g-dev \
+    libpng-dev \
+    tesseract-ocr && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apt-get remove -y gcc && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Copy the rest of the application code into the container
 COPY . .
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-
-# Run the application
 CMD ["python", "main.py"]

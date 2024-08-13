@@ -1,6 +1,6 @@
 import logging
 import fitz  # PyMuPDF
-import easyocr
+import pytesseract
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 from telegram import Message
@@ -8,34 +8,31 @@ from src.ai.gpt_formatter import format_message_with_gpt
 import os
 import numpy as np
 
-reader = easyocr.Reader(['en'])  # Initialize EasyOCR reader with English language
-
 async def extract_details(message: Message, bot):
     try:
+        combined_text = ""
+        
+        if message.text:
+            combined_text = message.text
+        
         if message.document:
             # Extract text from the PDF document
             file_id = message.document.file_id
             file_path = await download_file(file_id, 'data/', bot)
             extracted_text = extract_text_from_pdf(file_path)
-            
-            # Process the extracted text with GPT
-            formatted_content = format_message_with_gpt(extracted_text)
             os.remove(file_path)
-        elif message.text:
-            formatted_content = format_message_with_gpt(message.text)
-        else:
-            formatted_content = ''
-    
+            combined_text = extracted_text + "\n" + combined_text if combined_text else extracted_text
+        
+        formatted_content = format_message_with_gpt(combined_text)
+        
         content_dict = {}
         if formatted_content:
             for line in formatted_content.split('\n'):
                 if ':' in line:
                     key, value = line.split(':', 1)
                     content_dict[key.strip().replace('- ', '')] = value.strip()  # Normalize the keys
-    
         source = get_message_source(message)
         cmt_owner = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
-    
         return {
             'Deal ID': content_dict.get('Deal ID', ''),
             'Created Date': message.date.strftime("%Y-%m-%d"),
@@ -87,9 +84,8 @@ def ocr_page(page):
     try:
         page_pix = page.get_pixmap()
         img = Image.frombytes("RGB", [page_pix.width, page_pix.height], page_pix.samples)
-        img_np = np.array(img)  # Convert image to numpy array
-        text = reader.readtext(img_np, detail=0, paragraph=True)
-        return ' '.join(text)
+        text = pytesseract.image_to_string(img)
+        return text
     except Exception as e:
         logging.error(f"OCR processing error: {e}")
         return "Error performing OCR"

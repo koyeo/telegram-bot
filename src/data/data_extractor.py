@@ -1,12 +1,14 @@
 import logging
 import fitz  # PyMuPDF
-import ocrmypdf
+import easyocr
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 from telegram import Message
 from src.ai.gpt_formatter import format_message_with_gpt
 import os
-import tempfile
+import numpy as np
+
+reader = easyocr.Reader(['en'])  # Initialize EasyOCR reader with English language
 
 async def extract_details(message: Message, bot):
     try:
@@ -83,19 +85,11 @@ def process_page(page):
 
 def ocr_page(page):
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_ocr_output:
-            temp_ocr_output_path = temp_ocr_output.name
-
         page_pix = page.get_pixmap()
         img = Image.frombytes("RGB", [page_pix.width, page_pix.height], page_pix.samples)
-        img.save(temp_ocr_output_path, 'PDF')
-        ocrmypdf.ocr(temp_ocr_output_path, temp_ocr_output_path, skip_text=True)  # Only OCR pages without text
-        doc = fitz.open(temp_ocr_output_path)
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        os.remove(temp_ocr_output_path)  # Remove temporary OCR output file
-        return text
+        img_np = np.array(img)  # Convert image to numpy array
+        text = reader.readtext(img_np, detail=0, paragraph=True)
+        return ' '.join(text)
     except Exception as e:
         logging.error(f"OCR processing error: {e}")
         return "Error performing OCR"

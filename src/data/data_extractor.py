@@ -1,54 +1,63 @@
 import logging
 import fitz  # PyMuPDF
-import pytesseract
+import ocrmypdf
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 from telegram import Message
 from src.ai.gpt_formatter import format_message_with_gpt
 import os
+import tempfile
 
 async def extract_details(message: Message, bot):
-    if message.document:
-        # Extract text from the PDF document
-        file_id = message.document.file_id
-        file_path = await download_file(file_id, 'data/', bot)
-        extracted_text = extract_text_from_pdf(file_path)
-        
-        # Process the extracted text with GPT
-        formatted_content = format_message_with_gpt(extracted_text)
-    elif message.text:
-        formatted_content = format_message_with_gpt(message.text)
-    else:
-        formatted_content = ''
-
-    content_dict = {}
-    if formatted_content:
-        for line in formatted_content.split('\n'):
-            if ':' in line:
-                key, value = line.split(':', 1)
-                content_dict[key.strip().replace('- ', '')] = value.strip()  # Normalize the keys
-
-    source = get_message_source(message)
-    cmt_owner = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
-
-    return {
-        'Deal ID': content_dict.get('Deal ID', ''),
-        'Created Date': message.date.strftime("%Y-%m-%d"),
-        'Account Name / PortCo': content_dict.get('Account Name / PortCo', ''),
-        'Record Type ID': "012Dm0000012ZYDIA2",
-        'Deal Name': content_dict.get('Deal Name', ''),
-        'Stage': content_dict.get('Stage', 'New'),
-        'Account Description': content_dict.get('Account Description', ''),
-        'Website': content_dict.get('Website', ''),
-        'Deck': content_dict.get('Deck', ''),
-        'Fundraise Amount($USD)': content_dict.get('Fundraise Amount($USD)', ''),
-        'Equity Valuation/Cap': content_dict.get('Equity Valuation/Cap', ''),
-        'Token Valuation': content_dict.get('Token Valuation', ''),
-        'CMT Relationship Owner': cmt_owner,
-        'Sharepoint Link': "",
-        'Round': content_dict.get('Round', ''),
-        'Deal Source': source,
-        'File Name': message.document.file_name if message.document else ""
-    }
+    try:
+        if message.document:
+            # Extract text from the PDF document
+            file_id = message.document.file_id
+            file_path = await download_file(file_id, 'data/', bot)
+            extracted_text = extract_text_from_pdf(file_path)
+            
+            # Process the extracted text with GPT
+            formatted_content = format_message_with_gpt(extracted_text)
+            os.remove(file_path)
+        elif message.text:
+            formatted_content = format_message_with_gpt(message.text)
+        else:
+            formatted_content = ''
+    
+        content_dict = {}
+        if formatted_content:
+            for line in formatted_content.split('\n'):
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    content_dict[key.strip().replace('- ', '')] = value.strip()  # Normalize the keys
+    
+        source = get_message_source(message)
+        cmt_owner = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
+    
+        return {
+            'Deal ID': content_dict.get('Deal ID', ''),
+            'Created Date': message.date.strftime("%Y-%m-%d"),
+            'Account Name / PortCo': content_dict.get('Account Name / PortCo', ''),
+            'Record Type ID': "012Dm0000012ZYDIA2",
+            'Deal Name': content_dict.get('Deal Name', ''),
+            'Stage': content_dict.get('Stage', 'New'),
+            'Account Description': content_dict.get('Account Description', ''),
+            'Website': content_dict.get('Website', ''),
+            'Deck': content_dict.get('Deck', ''),
+            'Fundraise Amount($USD)': content_dict.get('Fundraise Amount($USD)', ''),
+            'Equity Valuation/Cap': content_dict.get('Equity Valuation/Cap', ''),
+            'Token Valuation': content_dict.get('Token Valuation', ''),
+            'CMT Relationship Owner': cmt_owner,
+            'Sharepoint Link': "",
+            'Round': content_dict.get('Round', ''),
+            'Deal Source': source,
+            'File Name': message.document.file_name if message.document else ""
+        }
+    except Exception as e:
+        error_message = f"An error occurred: {str(e)}"
+        logging.error(error_message)
+        await bot.send_message(chat_id=message.chat_id, text=error_message)
+        return None
 
 async def download_file(file_id, save_path, bot):
     file = await bot.get_file(file_id)
@@ -59,18 +68,37 @@ async def download_file(file_id, save_path, bot):
 def extract_text_from_pdf(file_path):
     text = ""
     doc = fitz.open(file_path)
-    for page in doc:
-        page_text = page.get_text()
-        if not page_text.strip():
-            # If no text is found, use OCR as a fallback
-            page_text = ocr_page(page)
-        text += page_text
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(process_page, page) for page in doc]
+        for future in futures:
+            text += future.result()
     return text
 
+def process_page(page):
+    page_text = page.get_text()
+    if not page_text.strip():
+        # If no text is found, use OCR as a fallback
+        page_text = ocr_page(page)
+    return page_text
+
 def ocr_page(page):
-    pix = page.get_pixmap()
-    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    return pytesseract.image_to_string(img)
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_ocr_output:
+            temp_ocr_output_path = temp_ocr_output.name
+
+        page_pix = page.get_pixmap()
+        img = Image.frombytes("RGB", [page_pix.width, page_pix.height], page_pix.samples)
+        img.save(temp_ocr_output_path, 'PDF')
+        ocrmypdf.ocr(temp_ocr_output_path, temp_ocr_output_path, skip_text=True)  # Only OCR pages without text
+        doc = fitz.open(temp_ocr_output_path)
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        os.remove(temp_ocr_output_path)  # Remove temporary OCR output file
+        return text
+    except Exception as e:
+        logging.error(f"OCR processing error: {e}")
+        return "Error performing OCR"
 
 def get_message_source(message: Message) -> str:
     """Extract the source of the forwarded message, if any."""

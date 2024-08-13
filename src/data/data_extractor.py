@@ -6,7 +6,6 @@ from PIL import Image
 from telegram import Message
 from src.ai.gpt_formatter import format_message_with_gpt
 import os
-import numpy as np
 
 async def extract_details(message: Message, bot):
     try:

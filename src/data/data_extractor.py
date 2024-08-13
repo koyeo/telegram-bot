@@ -6,6 +6,9 @@ from PIL import Image
 from telegram import Message
 from src.ai.gpt_formatter import format_message_with_gpt
 import os
+import re
+from urllib.parse import urlparse
+from docsend import DocSend
 
 async def extract_details(message: Message, bot):
     try:
@@ -13,6 +16,12 @@ async def extract_details(message: Message, bot):
         
         if message.text:
             combined_text = message.text
+            # Extract content from the DocSend link
+            if "docsend.com" in message.text.lower():
+                for word in message.text.split():
+                    if "docsend.com" in word:
+                        print("WORD : ", word)
+                        combined_text += "\n" + extract_docsend_content(word)
         
         if message.document:
             # Extract text from the PDF document
@@ -20,6 +29,8 @@ async def extract_details(message: Message, bot):
             file_path = await download_file(file_id, 'data/', bot)
             extracted_text = extract_text_from_pdf(file_path)
             os.remove(file_path)
+            
+            # Append extracted text from PDF to combined_text
             combined_text = extracted_text + "\n" + combined_text if combined_text else extracted_text
         
         formatted_content = format_message_with_gpt(combined_text)
@@ -30,8 +41,12 @@ async def extract_details(message: Message, bot):
                 if ':' in line:
                     key, value = line.split(':', 1)
                     content_dict[key.strip().replace('- ', '')] = value.strip()  # Normalize the keys
+
+        logging.info(f"CONTENT DICT: {content_dict}")
+
         source = get_message_source(message)
         cmt_owner = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
+
         return {
             'Deal ID': content_dict.get('Deal ID', ''),
             'Created Date': message.date.strftime("%Y-%m-%d"),
@@ -88,6 +103,32 @@ def ocr_page(page):
     except Exception as e:
         logging.error(f"OCR processing error: {e}")
         return "Error performing OCR"
+
+def extract_docsend_content(url):
+    try:
+        # Extract the unique identifier from the URL
+        parsed_url = urlparse(url)
+        docsend_key = re.search(r'/view/s/(\w+)', parsed_url.path).group(1)
+        print(f"DocSend Key: {docsend_key}")  # Debugging
+
+        # Initialize the DocSend object with the extracted key
+        docsend_client = DocSend(docsend_key)
+        # docsend_client.fetch_meta()
+        docsend_client.authorize('ojaros@cmt.digital')
+        # docsend_client.fetch_images()
+        docsend_client.save_pdf('doc.pdf')
+        # docsend_client.save_images('pages')
+        # text_content = ""
+        # for page in docsend_client.pages:
+        #     print("DOCSEND PAGE: ", page)  # Debugging
+        #     text_content += page.text + "\n"
+        # return text_content
+    except AttributeError as e:
+        logging.error(f"Error extracting content from DocSend link: Attribute error - {e}")
+        return "Error extracting content from DocSend link."
+    except Exception as e:
+        logging.error(f"Error extracting content from DocSend link: {e}")
+        return "Error extracting content from DocSend link."
 
 def get_message_source(message: Message) -> str:
     """Extract the source of the forwarded message, if any."""

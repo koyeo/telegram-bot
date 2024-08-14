@@ -1,14 +1,8 @@
 import logging
-import fitz  # PyMuPDF
-import pytesseract
-from concurrent.futures import ThreadPoolExecutor
-from PIL import Image
 from telegram import Message
 from src.ai.gpt_formatter import format_message_with_gpt
+from src.data.docsend_extract import extract_docsend_content, extract_text_from_pdf
 import os
-import re
-from urllib.parse import urlparse
-from docsend import DocSend
 
 async def extract_details(message: Message, bot):
     try:
@@ -21,7 +15,7 @@ async def extract_details(message: Message, bot):
                 for word in message.text.split():
                     if "docsend.com" in word:
                         print("WORD : ", word)
-                        combined_text += "\n" + extract_docsend_content(word)
+                        combined_text += "\n" + extract_docsend_content(word, email='ojaros@cmt.digital')
         
         if message.document:
             # Extract text from the PDF document
@@ -78,57 +72,6 @@ async def download_file(file_id, save_path, bot):
     await file.download_to_drive(file_path)
     return file_path
 
-def extract_text_from_pdf(file_path):
-    text = ""
-    doc = fitz.open(file_path)
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(process_page, page) for page in doc]
-        for future in futures:
-            text += future.result()
-    return text
-
-def process_page(page):
-    page_text = page.get_text()
-    if not page_text.strip():
-        # If no text is found, use OCR as a fallback
-        page_text = ocr_page(page)
-    return page_text
-
-def ocr_page(page):
-    try:
-        page_pix = page.get_pixmap()
-        img = Image.frombytes("RGB", [page_pix.width, page_pix.height], page_pix.samples)
-        text = pytesseract.image_to_string(img)
-        return text
-    except Exception as e:
-        logging.error(f"OCR processing error: {e}")
-        return "Error performing OCR"
-
-def extract_docsend_content(url):
-    try:
-        # Extract the unique identifier from the URL
-        parsed_url = urlparse(url)
-        docsend_key = re.search(r'/view/s/(\w+)', parsed_url.path).group(1)
-        print(f"DocSend Key: {docsend_key}")  # Debugging
-
-        # Initialize the DocSend object with the extracted key
-        docsend_client = DocSend(docsend_key)
-        # docsend_client.fetch_meta()
-        docsend_client.authorize('ojaros@cmt.digital')
-        # docsend_client.fetch_images()
-        docsend_client.save_pdf('doc.pdf')
-        # docsend_client.save_images('pages')
-        # text_content = ""
-        # for page in docsend_client.pages:
-        #     print("DOCSEND PAGE: ", page)  # Debugging
-        #     text_content += page.text + "\n"
-        # return text_content
-    except AttributeError as e:
-        logging.error(f"Error extracting content from DocSend link: Attribute error - {e}")
-        return "Error extracting content from DocSend link."
-    except Exception as e:
-        logging.error(f"Error extracting content from DocSend link: {e}")
-        return "Error extracting content from DocSend link."
 
 def get_message_source(message: Message) -> str:
     """Extract the source of the forwarded message, if any."""

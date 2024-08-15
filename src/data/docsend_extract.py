@@ -66,16 +66,32 @@ def authenticate(session, url, email, passcode, soup):
 def handle_dataroom(session, soup, email, passcode):
     doc_links = extract_document_links(soup)
     logging.info(f"Found {len(doc_links)} document links in the dataroom.")
-    return process_documents(doc_links, email, passcode)
+    combined_text = ""
+
+    for link in doc_links:
+        if 'href' in link.attrs:
+            doc_url = link['href']
+            logging.info(f"Processing document: {doc_url}")
+
+            doc_name_tag = link.find('div', class_='bundle-document_name')
+            doc_name = doc_name_tag.text.strip() if doc_name_tag else "unknown_document"
+            safe_doc_name = re.sub(r'[^\w\-_\.]', '_', doc_name).replace(' ', '_')
+            logging.info(f"Document name extracted: {safe_doc_name}")
+            document_text = handle_single_document(doc_url, email, passcode, safe_doc_name)
+            logging.info(f"EXTRACTED TEXT: {document_text[:1000]}...")
+            combined_text += document_text
+
+    return combined_text
 
 @error_handler
-def handle_single_document(url, email, passcode):
+def handle_single_document(url, email, passcode, doc_name=None):
+    temp_pdf_path = f'{doc_name}.pdf' if doc_name else 'temp_docsend.pdf'
     kwargs = generate_pdf_from_docsend_url(url, email, passcode, searchable=True)
-    with open('temp_docsend.pdf', 'wb') as f:
+    with open(temp_pdf_path, 'wb') as f:
         f.write(kwargs['content'])
-    extracted_text = extract_text_from_pdf('temp_docsend.pdf')
-    os.remove('temp_docsend.pdf')
-    return normalize_text(extracted_text)
+    extracted_text = extract_text_from_pdf(temp_pdf_path)
+    os.remove(temp_pdf_path)
+    return normalize_text(extracted_text) + "\n"
 
 @error_handler
 def extract_document_links(soup):
@@ -84,39 +100,6 @@ def extract_document_links(soup):
     soup = BeautifulSoup(unescaped_html, 'html.parser')
     container = soup.find('div', class_='bundle-viewer')
     return container.find_all('a', href=True)
-
-@error_handler
-def process_documents(doc_links, email, passcode):
-    return "".join([process_single_document(link['href'], email, passcode) for link in doc_links if 'href' in link.attrs])
-
-    # """
-    # Processes each document link, extracting and normalizing text.
-    # """
-    # combined_text = ""
-
-    # # Filter and process each valid document link
-    # for link in doc_links:
-    #     if 'href' in link.attrs:
-    #         # Process each document and add the text to combined_text
-    #         document_text = process_single_document(link, email, passcode)
-    #         combined_text += document_text
-
-    # return combined_text
-
-@error_handler
-def process_single_document(doc_url, email, passcode):
-    pdf_content = download_pdf(doc_url, email, passcode)
-    extracted_text = extract_text_from_pdf(pdf_content)
-    logging.info(f"EXTRACTED TEXT: {extracted_text}")
-    return normalize_text(extracted_text) + "\n"
-
-@error_handler
-def download_pdf(doc_url, email, passcode):
-    kwargs = generate_pdf_from_docsend_url(doc_url, email, passcode, searchable=True)
-    temp_pdf_path = f'temp_docsend_{os.path.basename(doc_url)}.pdf'
-    with open(temp_pdf_path, 'wb') as f:
-        f.write(kwargs['content'])
-    return temp_pdf_path
 
 @error_handler
 def generate_pdf_from_docsend_url(url, email, passcode='', searchable=True):
@@ -163,23 +146,25 @@ def ocr_page(page):
     return pytesseract.image_to_string(img)
 
 def normalize_text(text):
-    # Split lowercase words
-    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-    text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
-    text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
-    
-    # Split words after punctuation
-    text = re.sub(r'([.,!?:;-])([a-zA-Z])', r'\1 \2', text)
-    
-    # Split lowercase words (this is the key addition)
-    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-    text = re.sub(r'([a-z]{2,})([A-Z])', r'\1 \2', text)
-    
-    # Handle specific cases
-    text = text.replace('Esports', 'E-sports')
-    text = text.replace('Berachain', 'Bera chain')
-    
     # Replace multiple spaces with a single space
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s{2,}', ' ', text)
     
+    # Remove spaces between letters that are likely part of the same word
+    text = re.sub(r'(?<=\w)\s+(?=\w)', '', text)
+    
+    # Remove newlines followed by spaces or within words
+    text = re.sub(r'\n\s+', ' ', text)
+    text = re.sub(r'(?<!\n)\n(?!\n)', '', text)
+    
+    # Fix common OCR issues where characters are split
+    text = re.sub(r'(\w)\s+(\w)', r'\1\2', text)  # Join split characters
+    text = re.sub(r'(\w)\s+\-', r'\1-', text)  # Join split words before hyphens
+    text = re.sub(r'\-\s+(\w)', r'-\1', text)  # Join split words after hyphens
+    
+    # Handle em-dashes and multiple spaces around them
+    text = re.sub(r'\s-\s', '-', text)
+    text = re.sub(r'—', '-', text)
+    text = re.sub(r'\s—\s', '-', text)
+
+    # Strip leading and trailing whitespace
     return text.strip()

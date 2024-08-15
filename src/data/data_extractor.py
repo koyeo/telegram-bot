@@ -17,7 +17,7 @@ async def extract_details(message: Message, bot):
                 for word in message.text.split():
                     if "docsend.com" in word:
                         print("WORD : ", word)
-                        docsend_text = extract_docsend_content(word, email='ojaros@cmt.digital')
+                        docsend_text = extract_docsend_content(word, email='ojaros@cmt.digital', passcode='')
                         combined_text += "\n" + docsend_text
 
         # Handle attached PDF documents

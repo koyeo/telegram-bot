@@ -10,7 +10,7 @@ import re
 import json
 import html
 from functools import wraps
-import shutil
+from src.ai.gpt_formatter import generate_title_with_gpt, sanitize_filename
 import asyncio
 
 def error_handler(func):
@@ -27,24 +27,32 @@ def error_handler(func):
 async def extract_docsend_content(url, email, passcode=''):
     logging.info(f"Starting extraction for URL: {url}")
     session = create_session()
-    response = session.get(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
 
-    if 'input' in response.text and 'authenticity_token' in response.text:
-        soup = authenticate(session, url, email, passcode, soup)
+    try:
+        response = session.get(url, allow_redirects=True)
+        response.raise_for_status()
+        final_url = response.url
+        logging.info(f"Original URL {url} redirected to {final_url}")
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    pdf_paths = []
+        # Check if authentication is required and authenticate if needed
+        if 'input' in response.text and 'authenticity_token' in response.text:
+            soup = authenticate(session, final_url, email, passcode, soup)
 
-    if '/s/' in url:
-        combined_text, temp_pdf_paths = await handle_dataroom(session, soup, email, passcode)
-        pdf_paths.extend(temp_pdf_paths)
-    else:
-        extracted_text, temp_pdf_path = await handle_single_document(url, email, passcode)
-        combined_text = extracted_text
-        pdf_paths.append(temp_pdf_path)
+        pdf_paths = []
+        if '/s/' in final_url:  # Check if it's a dataroom
+            combined_text, temp_pdf_paths = await handle_dataroom(session, soup, email, passcode)
+            pdf_paths.extend(temp_pdf_paths)
+        else:
+            extracted_text, temp_pdf_path = await handle_single_document(final_url, email, passcode)
+            combined_text = extracted_text
+            pdf_paths.append(temp_pdf_path)
 
-    return combined_text, pdf_paths
+        return combined_text, pdf_paths
+
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"Failed to access or authenticate at {url}: {e}")
+        raise
 
 def create_session():
     session = requests.Session()
@@ -127,7 +135,17 @@ async def handle_single_document(url, email, passcode, doc_name=None):
         logging.error(f"File {temp_pdf_path} was not written successfully.")
     
     extracted_text = extract_text_from_pdf(temp_pdf_path)
-    return normalize_text(extracted_text) + "\n", temp_pdf_path  
+    normalized_text = normalize_text(extracted_text)
+
+    if not doc_name:
+        representative_title = generate_title_with_gpt(normalized_text)
+        safe_doc_name = sanitize_filename(f"{representative_title}_{url.split('/')[-1]}")
+        new_temp_pdf_path = os.path.join(temp_pdf_dir, f'{safe_doc_name}.pdf')
+        os.rename(temp_pdf_path, new_temp_pdf_path)
+        temp_pdf_path = new_temp_pdf_path
+
+    return normalized_text + "\n", temp_pdf_path  
+
 
 @error_handler
 def extract_document_links(soup):
@@ -207,22 +225,6 @@ def normalize_text(text):
 
     # Strip leading and trailing whitespace
     return text.strip()
-
-def move_pdfs_to_account_directory(account_name, pdf_paths):
-    account_dir = os.path.join('account_pdfs', account_name)
-    os.makedirs(account_dir, exist_ok=True)
-    
-    moved_paths = []
-    for pdf_path in pdf_paths:
-        if os.path.exists(pdf_path):
-            new_path = os.path.join(account_dir, os.path.basename(pdf_path))
-            shutil.move(pdf_path, new_path)
-            moved_paths.append(new_path)
-            logging.info(f"Moved {pdf_path} to {new_path}")
-        else:
-            logging.warning(f"File not found: {pdf_path}")
-    
-    return moved_paths
 
 
 def is_valid_docsend_document(session, url):

@@ -1,6 +1,6 @@
-import os
 import openai
 import logging
+import re
 
 client = openai.OpenAI()
 
@@ -35,7 +35,7 @@ def format_message_with_gpt(message_text):
                 {"role": "user", "content": prompt}
             ],
             max_tokens=2000,
-            temperature=0.5,
+            temperature=0.3,
         )
         logging.info(f"OpenAI response: {response}")
         return response.choices[0].message.content
@@ -48,3 +48,38 @@ def format_message_with_gpt(message_text):
         logging.error("Another non-200-range status code was received")
         logging.error(e.status_code)
         logging.error(e.response)
+
+
+def generate_title_with_gpt(message_text):
+    prompt = (
+        "Please provide a short and descriptive title for the following document. Using the name of the company followed by a description of its contents (e.g. deck, whitepaper) will usually be best:\n\n"
+        f"{message_text[:1000]}"  # Send only the first 1000 characters to keep it concise
+    )
+
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=5,
+            temperature=0.2,
+        )
+        logging.info(f"OpenAI response: {response}")
+        return response.choices[0].message.content
+    except openai.APIConnectionError as e:
+        logging.error("The server could not be reached")
+        logging.error(e.__cause__)  # an underlying Exception, likely raised within httpx.
+    except openai.RateLimitError as e:
+        logging.error("A 429 status code was received; we should back off a bit.")
+    except openai.APIStatusError as e:
+        logging.error("Another non-200-range status code was received")
+        logging.error(e.status_code)
+        logging.error(e.response)
+
+
+def sanitize_filename(filename):
+    """Sanitize a filename to remove/replace unsafe characters."""
+    return re.sub(r'[^\w\-_. ]', '_', filename).strip()
+    

@@ -1,7 +1,7 @@
 import logging
 from telegram import Message
 from src.ai.gpt_formatter import format_message_with_gpt
-from src.data.docsend_extract import extract_docsend_content, extract_text_from_pdf, move_pdfs_to_account_directory
+from src.data.docsend_extract import extract_docsend_content, extract_text_from_pdf
 from src.data.deal_counter import get_next_deal_id
 import os
 import shutil
@@ -26,8 +26,7 @@ async def extract_details(message: Message, bot):
 
         # Handle attached PDF documents
         if message.document:
-            file_name = message.document.file_name
-            file_path = await download_file(file_name, 'temp_pdfs/', bot)
+            file_path = await download_file(message.document, 'temp_pdfs/', bot)
             extracted_text = extract_text_from_pdf(file_path)
             
             # Aggregate extracted text from PDF with existing text
@@ -35,7 +34,7 @@ async def extract_details(message: Message, bot):
             pdf_paths.append(file_path)  # Collect the PDF path
 
         # Use GPT to format the aggregated content
-        logging.info(f"COMBINED TEXT: {combined_text[:10000]}")
+        logging.info(f"COMBINED TEXT: {combined_text[:1000]}")
         formatted_content = format_message_with_gpt(combined_text)
 
         # Parse the formatted content into a dictionary
@@ -51,15 +50,8 @@ async def extract_details(message: Message, bot):
 
         # Move PDFs to the account-specific directory if there are any PDFs
         if pdf_paths:
-            logging.info(f"PDF PATHS: {pdf_paths}")
             move_pdfs_to_account_directory(account_name, pdf_paths)
             
-            # Remove the temporary PDF directory
-            temp_pdf_dir = 'temp_pdfs'
-            if os.path.exists(temp_pdf_dir):
-                shutil.rmtree(temp_pdf_dir)
-                logging.info(f"Removed temporary PDF directory: {temp_pdf_dir}")
-
         return {
             'Deal ID': deal_id,
             'Created Date': message.date.strftime("%Y-%m-%d"),
@@ -102,16 +94,13 @@ def parse_formatted_content(formatted_content):
                     logging.warning(f"Could not parse line: {line}")
             else:
                 logging.warning(f"Skipping line without ':': {line}")
-    
-    content_dict = {k: v if v != '' else 'N/A' for k, v in content_dict.items()}
-
     return content_dict
 
-async def download_file(file_id, save_path, bot):
+async def download_file(document, save_path, bot):
     os.makedirs(save_path, exist_ok=True)
-    
-    file = await bot.get_file(file_id)
-    file_path = os.path.join(save_path, file.file_path.split('/')[-1])
+    file_name = document.file_name
+    file = await bot.get_file(document.file_id)
+    file_path = os.path.join(save_path, file_name)
     await file.download_to_drive(file_path)
     return file_path
 
@@ -127,3 +116,24 @@ def get_message_source(message: Message) -> str:
         if hasattr(message.forward_origin, 'sender_user_name') and message.forward_origin.sender_user_name:
             return message.forward_origin.sender_user_name
     return "Unknown"
+
+def move_pdfs_to_account_directory(account_name, pdf_paths):
+    """Move PDF files to the account-specific directory, avoiding duplicates, and clean up temporary files."""
+    account_dir = os.path.join('account_pdfs', account_name)
+    os.makedirs(account_dir, exist_ok=True)
+    
+    for pdf_path in pdf_paths:
+        if os.path.exists(pdf_path):
+            file_name = os.path.basename(pdf_path)
+            target_path = os.path.join(account_dir, file_name)
+            
+            if os.path.exists(target_path):
+                logging.info(f"File {file_name} already exists in {account_dir}, deleting temporary file.")
+                os.remove(pdf_path)
+            else:
+                shutil.move(pdf_path, target_path)
+                logging.info(f"Moved {pdf_path} to {target_path}")
+            
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+                logging.info(f"Deleted processed file: {pdf_path}")

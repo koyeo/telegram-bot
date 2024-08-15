@@ -8,33 +8,34 @@ async def extract_details(message: Message, bot):
     try:
         combined_text = ""
         
+        # Aggregate text from the original Telegram message
         if message.text:
             combined_text = message.text
-            # Extract content from the DocSend link
+            
+            # Check for DocSend links in the message text
             if "docsend.com" in message.text.lower():
                 for word in message.text.split():
                     if "docsend.com" in word:
                         print("WORD : ", word)
-                        combined_text += "\n" + extract_docsend_content(word, email='ojaros@cmt.digital')
-        
+                        docsend_text = extract_docsend_content(word, email='ojaros@cmt.digital')
+                        combined_text += "\n" + docsend_text
+
+        # Handle attached PDF documents
         if message.document:
-            # Extract text from the PDF document
             file_id = message.document.file_id
             file_path = await download_file(file_id, 'data/', bot)
             extracted_text = extract_text_from_pdf(file_path)
             os.remove(file_path)
             
-            # Append extracted text from PDF to combined_text
-            combined_text = extracted_text + "\n" + combined_text if combined_text else extracted_text
-        
+            # Aggregate extracted text from PDF with existing text
+            combined_text += "\n" + extracted_text
+
+        # logging.info(f"COMBINED TEXT:    {combined_text}  ")
+        # Use GPT to format the aggregated content
         formatted_content = format_message_with_gpt(combined_text)
-        
-        content_dict = {}
-        if formatted_content:
-            for line in formatted_content.split('\n'):
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    content_dict[key.strip().replace('- ', '')] = value.strip()  # Normalize the keys
+
+        # Parse the formatted content into a dictionary
+        content_dict = parse_formatted_content(formatted_content)
 
         logging.info(f"CONTENT DICT: {content_dict}")
 
@@ -66,12 +67,21 @@ async def extract_details(message: Message, bot):
         await bot.send_message(chat_id=message.chat_id, text=error_message)
         return None
 
+def parse_formatted_content(formatted_content):
+    """Parse the formatted content returned by GPT into a dictionary."""
+    content_dict = {}
+    if formatted_content:
+        for line in formatted_content.split('\n'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                content_dict[key.strip().replace('- ', '')] = value.strip()
+    return content_dict
+
 async def download_file(file_id, save_path, bot):
     file = await bot.get_file(file_id)
     file_path = os.path.join(save_path, file.file_path.split('/')[-1])
     await file.download_to_drive(file_path)
     return file_path
-
 
 def get_message_source(message: Message) -> str:
     """Extract the source of the forwarded message, if any."""

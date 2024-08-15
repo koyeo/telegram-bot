@@ -1,12 +1,15 @@
 import logging
 from telegram import Message
 from src.ai.gpt_formatter import format_message_with_gpt
-from src.data.docsend_extract import extract_docsend_content, extract_text_from_pdf
+from src.data.docsend_extract import extract_docsend_content, extract_text_from_pdf, move_pdfs_to_account_directory
+from src.data.deal_counter import get_next_deal_id
 import os
+import shutil
 
 async def extract_details(message: Message, bot):
     try:
         combined_text = ""
+        pdf_paths = []  # Collect PDF paths here
         
         # Aggregate text from the original Telegram message
         if message.text:
@@ -16,22 +19,23 @@ async def extract_details(message: Message, bot):
             if "docsend.com" in message.text.lower():
                 for word in message.text.split():
                     if "docsend.com" in word:
-                        print("WORD : ", word)
-                        docsend_text = extract_docsend_content(word, email='ojaros@cmt.digital', passcode='')
+                        # Extract the content and get the PDF path
+                        docsend_text, docsend_pdf_paths = extract_docsend_content(word, email='ojaros@cmt.digital', passcode='')
                         combined_text += "\n" + docsend_text
+                        pdf_paths.extend(docsend_pdf_paths)  # Collect the PDF paths
 
         # Handle attached PDF documents
         if message.document:
-            file_id = message.document.file_id
-            file_path = await download_file(file_id, 'data/', bot)
+            file_name = message.document.file_name
+            file_path = await download_file(file_name, 'temp_pdfs/', bot)
             extracted_text = extract_text_from_pdf(file_path)
-            os.remove(file_path)
             
             # Aggregate extracted text from PDF with existing text
             combined_text += "\n" + extracted_text
+            pdf_paths.append(file_path)  # Collect the PDF path
 
-        # logging.info(f"COMBINED TEXT:    {combined_text}  ")
         # Use GPT to format the aggregated content
+        logging.info(f"COMBINED TEXT: {combined_text[:1000]}")
         formatted_content = format_message_with_gpt(combined_text)
 
         # Parse the formatted content into a dictionary
@@ -41,11 +45,25 @@ async def extract_details(message: Message, bot):
 
         source = get_message_source(message)
         cmt_owner = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
+        deal_id = get_next_deal_id()
+        account_name = content_dict.get('Account Name / PortCo', deal_id)
+        logging.info(f"ACCOUNT_NAME: {account_name}")
+
+        # Move PDFs to the account-specific directory if there are any PDFs
+        if pdf_paths:
+            logging.info(f"PDF PATHS: {pdf_paths}")
+            move_pdfs_to_account_directory(account_name, pdf_paths)
+            
+            # Remove the temporary PDF directory
+            temp_pdf_dir = 'temp_pdfs'
+            if os.path.exists(temp_pdf_dir):
+                shutil.rmtree(temp_pdf_dir)
+                logging.info(f"Removed temporary PDF directory: {temp_pdf_dir}")
 
         return {
-            'Deal ID': content_dict.get('Deal ID', ''),
+            'Deal ID': deal_id,
             'Created Date': message.date.strftime("%Y-%m-%d"),
-            'Account Name / PortCo': content_dict.get('Account Name / PortCo', ''),
+            'Account Name / PortCo': account_name,
             'Record Type ID': "012Dm0000012ZYDIA2",
             'Deal Name': content_dict.get('Deal Name', ''),
             'Stage': content_dict.get('Stage', 'New'),
@@ -66,7 +84,7 @@ async def extract_details(message: Message, bot):
         logging.error(error_message)
         await bot.send_message(chat_id=message.chat_id, text=error_message)
         return None
-
+    
 def parse_formatted_content(formatted_content):
     """Parse the formatted content returned by GPT into a dictionary."""
     content_dict = {}
@@ -78,6 +96,8 @@ def parse_formatted_content(formatted_content):
     return content_dict
 
 async def download_file(file_id, save_path, bot):
+    os.makedirs(save_path, exist_ok=True)
+    
     file = await bot.get_file(file_id)
     file_path = os.path.join(save_path, file.file_path.split('/')[-1])
     await file.download_to_drive(file_path)

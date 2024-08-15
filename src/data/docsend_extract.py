@@ -10,6 +10,7 @@ import re
 import json
 import html
 from functools import wraps
+import shutil
 
 def error_handler(func):
     @wraps(func)
@@ -32,10 +33,17 @@ def extract_docsend_content(url, email, passcode=''):
     if 'input' in response.text and 'authenticity_token' in response.text:
         soup = authenticate(session, url, email, passcode, soup)
 
+    pdf_paths = []
+
     if '/s/' in url:
-        return handle_dataroom(session, soup, email, passcode)
+        combined_text, temp_pdf_paths = handle_dataroom(session, soup, email, passcode)
+        pdf_paths.extend(temp_pdf_paths)
     else:
-        return handle_single_document(url, email, passcode)
+        extracted_text, temp_pdf_path = handle_single_document(url, email, passcode)
+        combined_text = extracted_text
+        pdf_paths.append(temp_pdf_path)
+
+    return combined_text, pdf_paths
 
 def create_session():
     session = requests.Session()
@@ -65,33 +73,51 @@ def authenticate(session, url, email, passcode, soup):
 @error_handler
 def handle_dataroom(session, soup, email, passcode):
     doc_links = extract_document_links(soup)
-    logging.info(f"Found {len(doc_links)} document links in the dataroom.")
+    logging.info(f"Found {len(doc_links)} links in the dataroom.")
+
     combined_text = ""
+    temp_pdf_paths = []
 
     for link in doc_links:
         if 'href' in link.attrs:
             doc_url = link['href']
-            logging.info(f"Processing document: {doc_url}")
+            logging.info(f"Examining URL: {doc_url}")
+            
+            if is_valid_docsend_document(session, doc_url):
+                logging.info(f"Processing document: {doc_url}")
+                doc_name_tag = link.find('div', class_='bundle-document_name')
+                doc_name = doc_name_tag.text.strip() if doc_name_tag else "unknown_document"
+                safe_doc_name = re.sub(r'[^\w\-_\.]', '_', doc_name).replace(' ', '_')
+                logging.info(f"Document name extracted: {safe_doc_name}")
+                
+                document_text, temp_pdf_path = handle_single_document(doc_url, email, passcode, safe_doc_name)
+                combined_text += document_text
+                temp_pdf_paths.append(temp_pdf_path)
+            else:
+                logging.info(f"Skipping non-document URL: {doc_url}")
 
-            doc_name_tag = link.find('div', class_='bundle-document_name')
-            doc_name = doc_name_tag.text.strip() if doc_name_tag else "unknown_document"
-            safe_doc_name = re.sub(r'[^\w\-_\.]', '_', doc_name).replace(' ', '_')
-            logging.info(f"Document name extracted: {safe_doc_name}")
-            document_text = handle_single_document(doc_url, email, passcode, safe_doc_name)
-            logging.info(f"EXTRACTED TEXT: {document_text[:1000]}...")
-            combined_text += document_text
-
-    return combined_text
+    return combined_text, temp_pdf_paths
 
 @error_handler
 def handle_single_document(url, email, passcode, doc_name=None):
-    temp_pdf_path = f'{doc_name}.pdf' if doc_name else 'temp_docsend.pdf'
+    temp_pdf_dir = 'temp_pdfs'
+    os.makedirs(temp_pdf_dir, exist_ok=True)
+    
+    temp_pdf_path = os.path.join(temp_pdf_dir, f'{doc_name}.pdf') if doc_name else os.path.join(temp_pdf_dir, 'temp_docsend.pdf')
+
     kwargs = generate_pdf_from_docsend_url(url, email, passcode, searchable=True)
+    
     with open(temp_pdf_path, 'wb') as f:
         f.write(kwargs['content'])
+    
+    if os.path.exists(temp_pdf_path):
+        file_size = os.path.getsize(temp_pdf_path)
+        logging.info(f"File {temp_pdf_path} written successfully with size {file_size} bytes.")
+    else:
+        logging.error(f"File {temp_pdf_path} was not written successfully.")
+    
     extracted_text = extract_text_from_pdf(temp_pdf_path)
-    os.remove(temp_pdf_path)
-    return normalize_text(extracted_text) + "\n"
+    return normalize_text(extracted_text) + "\n", temp_pdf_path  
 
 @error_handler
 def extract_document_links(soup):
@@ -101,7 +127,6 @@ def extract_document_links(soup):
     container = soup.find('div', class_='bundle-viewer')
     return container.find_all('a', href=True)
 
-@error_handler
 def generate_pdf_from_docsend_url(url, email, passcode='', searchable=True):
     credentials = docsend2pdf_credentials()
     kwargs = dict(email=email, passcode=passcode, searchable=searchable, **credentials)
@@ -131,9 +156,13 @@ def docsend2pdf_translate(url, csrfmiddlewaretoken, csrftoken, email, passcode='
 
 @error_handler
 def extract_text_from_pdf(file_path):
-    doc = fitz.open(file_path)
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        return "".join(executor.map(process_page, doc))
+    try:
+        doc = fitz.open(file_path)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            return "".join(executor.map(process_page, doc))
+    except Exception as e:
+        logging.error(f"Error processing PDF: {file_path} | {e}")
+        return ""
 
 def process_page(page):
     page_text = page.get_text()
@@ -168,3 +197,36 @@ def normalize_text(text):
 
     # Strip leading and trailing whitespace
     return text.strip()
+
+def move_pdfs_to_account_directory(account_name, pdf_paths):
+    account_dir = os.path.join('account_pdfs', account_name)
+    os.makedirs(account_dir, exist_ok=True)
+    
+    moved_paths = []
+    for pdf_path in pdf_paths:
+        if os.path.exists(pdf_path):
+            new_path = os.path.join(account_dir, os.path.basename(pdf_path))
+            shutil.move(pdf_path, new_path)
+            moved_paths.append(new_path)
+            logging.info(f"Moved {pdf_path} to {new_path}")
+        else:
+            logging.warning(f"File not found: {pdf_path}")
+    
+    return moved_paths
+
+
+def is_valid_docsend_document(session, url):
+    if 'docsend.com' not in url or '/view/' not in url:
+        return False
+    
+    try:
+        response = session.get(url, allow_redirects=False)
+        if response.status_code == 302:  # Check if it's a redirect
+            location = response.headers.get('Location', '')
+            if 'youtube.com' in location or 'youtu.be' in location:
+                logging.info(f"URL {url} redirects to YouTube. Skipping.")
+                return False
+        return True
+    except Exception as e:
+        logging.error(f"Error checking URL {url}: {str(e)}")
+        return False

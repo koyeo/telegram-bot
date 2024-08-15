@@ -5,12 +5,13 @@ import os
 import fitz
 from PIL import Image
 import pytesseract
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import json
 import html
 from functools import wraps
 import shutil
+import asyncio
 
 def error_handler(func):
     @wraps(func)
@@ -23,7 +24,7 @@ def error_handler(func):
     return wrapper
 
 @error_handler
-def extract_docsend_content(url, email, passcode=''):
+async def extract_docsend_content(url, email, passcode=''):
     logging.info(f"Starting extraction for URL: {url}")
     session = create_session()
     response = session.get(url)
@@ -36,10 +37,10 @@ def extract_docsend_content(url, email, passcode=''):
     pdf_paths = []
 
     if '/s/' in url:
-        combined_text, temp_pdf_paths = handle_dataroom(session, soup, email, passcode)
+        combined_text, temp_pdf_paths = await handle_dataroom(session, soup, email, passcode)
         pdf_paths.extend(temp_pdf_paths)
     else:
-        extracted_text, temp_pdf_path = handle_single_document(url, email, passcode)
+        extracted_text, temp_pdf_path = await handle_single_document(url, email, passcode)
         combined_text = extracted_text
         pdf_paths.append(temp_pdf_path)
 
@@ -70,36 +71,45 @@ def authenticate(session, url, email, passcode, soup):
     logging.info(f"Authenticated with email: {email}")
     return BeautifulSoup(auth_response.text, 'html.parser')
 
-@error_handler
-def handle_dataroom(session, soup, email, passcode):
+async def process_docsend_document(session, url, email, passcode, safe_doc_name):
+    logging.info(f"Processing URL: {url}")
+
+    document_text, temp_pdf_path = await handle_single_document(url, email, passcode, safe_doc_name)
+    return document_text, temp_pdf_path
+
+async def handle_dataroom(session, soup, email, passcode):
     doc_links = extract_document_links(soup)
     logging.info(f"Found {len(doc_links)} links in the dataroom.")
 
-    combined_text = ""
-    temp_pdf_paths = []
+    tasks = []
 
     for link in doc_links:
         if 'href' in link.attrs:
             doc_url = link['href']
-            logging.info(f"Examining URL: {doc_url}")
+            doc_name_tag = link.find('div', class_='bundle-document_name')
+            doc_name = doc_name_tag.text.strip() if doc_name_tag else "unknown_document"
+            safe_doc_name = re.sub(r'[^\w\-_\.]', '_', doc_name).replace(' ', '_')
             
             if is_valid_docsend_document(session, doc_url):
-                logging.info(f"Processing document: {doc_url}")
-                doc_name_tag = link.find('div', class_='bundle-document_name')
-                doc_name = doc_name_tag.text.strip() if doc_name_tag else "unknown_document"
-                safe_doc_name = re.sub(r'[^\w\-_\.]', '_', doc_name).replace(' ', '_')
-                logging.info(f"Document name extracted: {safe_doc_name}")
-                
-                document_text, temp_pdf_path = handle_single_document(doc_url, email, passcode, safe_doc_name)
-                combined_text += document_text
-                temp_pdf_paths.append(temp_pdf_path)
-            else:
-                logging.info(f"Skipping non-document URL: {doc_url}")
+                tasks.append(asyncio.create_task(process_docsend_document(session, doc_url, email, passcode, safe_doc_name)))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    combined_text = ""
+    temp_pdf_paths = []
+
+    for result in results:
+        if isinstance(result, tuple):
+            document_text, temp_pdf_path = result
+            combined_text += document_text
+            temp_pdf_paths.append(temp_pdf_path)
+        else:
+            logging.error(f"Error in processing document: {result}")
 
     return combined_text, temp_pdf_paths
 
 @error_handler
-def handle_single_document(url, email, passcode, doc_name=None):
+async def handle_single_document(url, email, passcode, doc_name=None):
     temp_pdf_dir = 'temp_pdfs'
     os.makedirs(temp_pdf_dir, exist_ok=True)
     

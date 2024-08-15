@@ -20,7 +20,7 @@ async def extract_details(message: Message, bot):
                 for word in message.text.split():
                     if "docsend.com" in word:
                         # Extract the content and get the PDF path
-                        docsend_text, docsend_pdf_paths = extract_docsend_content(word, email='ojaros@cmt.digital', passcode='')
+                        docsend_text, docsend_pdf_paths = await extract_docsend_content(word, email='ojaros@cmt.digital', passcode='')
                         combined_text += "\n" + docsend_text
                         pdf_paths.extend(docsend_pdf_paths)  # Collect the PDF paths
 
@@ -35,7 +35,7 @@ async def extract_details(message: Message, bot):
             pdf_paths.append(file_path)  # Collect the PDF path
 
         # Use GPT to format the aggregated content
-        logging.info(f"COMBINED TEXT: {combined_text[:1000]}")
+        logging.info(f"COMBINED TEXT: {combined_text[:10000]}")
         formatted_content = format_message_with_gpt(combined_text)
 
         # Parse the formatted content into a dictionary
@@ -86,13 +86,25 @@ async def extract_details(message: Message, bot):
         return None
     
 def parse_formatted_content(formatted_content):
-    """Parse the formatted content returned by GPT into a dictionary."""
+    """Parse the formatted content returned by GPT into a dictionary, handling potential edge cases."""
     content_dict = {}
     if formatted_content:
-        for line in formatted_content.split('\n'):
+        lines = formatted_content.split('\n')
+        
+        for line in lines:
             if ':' in line:
-                key, value = line.split(':', 1)
-                content_dict[key.strip().replace('- ', '')] = value.strip()
+                try:
+                    key, value = line.split(':', 1)
+                    clean_key = key.strip().replace('- ', '').replace('"', '').replace(',', '')
+                    clean_value = value.strip().replace('"', '').replace(',', '')
+                    content_dict[clean_key] = clean_value
+                except ValueError:
+                    logging.warning(f"Could not parse line: {line}")
+            else:
+                logging.warning(f"Skipping line without ':': {line}")
+    
+    content_dict = {k: v if v != '' else 'N/A' for k, v in content_dict.items()}
+
     return content_dict
 
 async def download_file(file_id, save_path, bot):

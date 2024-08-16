@@ -37,21 +37,30 @@ async def extract_docsend_content(url, email, passcode=''):
 
         # Check if authentication is required and authenticate if needed
         if 'input' in response.text and 'authenticity_token' in response.text:
+            logging.debug("Authentication required, starting authentication process.")
             soup = authenticate(session, final_url, email, passcode, soup)
+            logging.debug("Authentication successful.")
 
         pdf_paths = []
         if '/s/' in final_url:  # Check if it's a dataroom
+            logging.info("Detected dataroom, starting dataroom handling.")
             combined_text, temp_pdf_paths = await handle_dataroom(session, soup, email, passcode)
             pdf_paths.extend(temp_pdf_paths)
+            logging.info("Dataroom handling complete.")
         else:
+            logging.info("Handling as a single document.")
             extracted_text, temp_pdf_path = await handle_single_document(final_url, email, passcode)
             combined_text = extracted_text
             pdf_paths.append(temp_pdf_path)
+            logging.info("Single document handling complete.")
 
         return combined_text, pdf_paths
 
     except requests.exceptions.HTTPError as e:
-        logging.error(f"Failed to access or authenticate at {url}: {e}")
+        logging.error(f"Failed to access or authenticate at {url}: {e} | Response: {e.response.text}")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error in extract_docsend_content: {e}")
         raise
 
 def create_session():
@@ -66,7 +75,6 @@ def create_session():
     })
     return session
 
-@error_handler
 def authenticate(session, url, email, passcode, soup):
     csrf_token = soup.find('meta', {'name': 'csrf-token'})['content']
     auth_data = {
@@ -74,10 +82,23 @@ def authenticate(session, url, email, passcode, soup):
         'link_auth_form[email]': email, 'link_auth_form[passcode]': passcode,
         'commit': 'Continue'
     }
-    auth_response = session.post(url, data=auth_data)
-    auth_response.raise_for_status()
-    logging.info(f"Authenticated with email: {email}")
-    return BeautifulSoup(auth_response.text, 'html.parser')
+
+    try:
+        logging.info(f"Sending authentication request to {url} with email {email}")
+        logging.debug(f"Authentication data: {auth_data}")
+        auth_response = session.post(url, data=auth_data)
+        auth_response.raise_for_status()
+        logging.info(f"Authenticated with email: {email} for URL: {url}")
+        return BeautifulSoup(auth_response.text, 'html.parser')
+    except requests.exceptions.HTTPError as e:
+        if "Please verify that you own the entered email address" in e.response.text:
+            logging.error(f"Email verification required for {email}. Please check your email inbox.")
+            raise ValueError(f"Email verification required for {email}. Please check your email inbox.")
+        logging.error(f"Error in authenticate: {e} | URL: {url} | Response: {e.response.text}")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error during authentication: {e}")
+        raise
 
 async def process_docsend_document(session, url, email, passcode, safe_doc_name):
     logging.info(f"Processing URL: {url}")

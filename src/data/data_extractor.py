@@ -5,6 +5,7 @@ from src.data.docsend_extract import extract_docsend_content, extract_text_from_
 from src.data.deal_counter import get_next_deal_id
 import os
 import shutil
+import json
 
 async def extract_details(message: Message, bot):
     try:
@@ -15,38 +16,29 @@ async def extract_details(message: Message, bot):
         if message.text:
             combined_text = message.text
             
-            # Check for DocSend links in the message text
-            if "docsend.com" in message.text.lower():
-                for word in message.text.split():
-                    if "docsend.com" in word:
-                        # Extract the content and get the PDF path
-                        docsend_text, docsend_pdf_paths = await extract_docsend_content(word, email='ojaros@cmt.digital', passcode='')
-                        combined_text += "\n" + docsend_text
-                        pdf_paths.extend(docsend_pdf_paths)  # Collect the PDF paths
+        docsend_links = extract_docsend_links(message)
+
+        for link in docsend_links:
+            docsend_text, docsend_pdf_paths = await extract_docsend_content(link, email='ojaros@cmt.digital', passcode='')
+            combined_text += "\n" + docsend_text
+            pdf_paths.extend(docsend_pdf_paths)
 
         # Handle attached PDF documents
         if message.document:
             file_path = await download_file(message.document, 'temp_pdfs/', bot)
             extracted_text = extract_text_from_pdf(file_path)
-            
-            # Aggregate extracted text from PDF with existing text
             combined_text += "\n" + extracted_text
             pdf_paths.append(file_path)  # Collect the PDF path
 
-        # Use GPT to format the aggregated content
         logging.info(f"COMBINED TEXT: {combined_text[:1000]}")
-        formatted_content = format_message_with_gpt(combined_text)
-
-        # Parse the formatted content into a dictionary
-        content_dict = parse_formatted_content(formatted_content)
-
+        content_dict = format_message_with_gpt(message_text=combined_text, expected_fields=None, mode='format')
+        
         logging.info(f"CONTENT DICT: {content_dict}")
 
-        source = get_message_source(message)
+        forwarded_from = get_message_source(message)
         cmt_owner = f"{message.from_user.first_name} {message.from_user.last_name or ''}".strip()
         deal_id = get_next_deal_id()
         account_name = content_dict.get('Account Name / PortCo', deal_id)
-        logging.info(f"ACCOUNT_NAME: {account_name}")
 
         # Move PDFs to the account-specific directory if there are any PDFs
         if pdf_paths:
@@ -68,33 +60,15 @@ async def extract_details(message: Message, bot):
             'CMT Relationship Owner': cmt_owner,
             'Sharepoint Link': "",
             'Round': content_dict.get('Round', ''),
-            'Deal Source': source,
+            'Deal Source': None,
+            'Forwarded From': forwarded_from,
             'File Name': message.document.file_name if message.document else ""
-        }
+        }, None
     except Exception as e:
         error_message = f"An error occurred: {str(e)}"
         logging.error(error_message)
-        await bot.send_message(chat_id=message.chat_id, text=error_message)
-        return None
+        return None, error_message
     
-def parse_formatted_content(formatted_content):
-    """Parse the formatted content returned by GPT into a dictionary, handling potential edge cases."""
-    content_dict = {}
-    if formatted_content:
-        lines = formatted_content.split('\n')
-        
-        for line in lines:
-            if ':' in line:
-                try:
-                    key, value = line.split(':', 1)
-                    clean_key = key.strip().replace('- ', '').replace('"', '').replace(',', '')
-                    clean_value = value.strip().replace('"', '').replace(',', '')
-                    content_dict[clean_key] = clean_value
-                except ValueError:
-                    logging.warning(f"Could not parse line: {line}")
-            else:
-                logging.warning(f"Skipping line without ':': {line}")
-    return content_dict
 
 async def download_file(document, save_path, bot):
     os.makedirs(save_path, exist_ok=True)
@@ -137,3 +111,27 @@ def move_pdfs_to_account_directory(account_name, pdf_paths):
             if os.path.exists(pdf_path):
                 os.remove(pdf_path)
                 logging.info(f"Deleted processed file: {pdf_path}")
+
+def extract_docsend_links(message: Message) -> list:
+    """
+    Extracts DocSend links from the message, looking in both the text and entities.
+    """
+    docsend_links = []
+
+    if message.text:
+        words = message.text.split()
+        for word in words:
+            if "docsend.com" in word.lower():
+                docsend_links.append(word)
+
+    if message.entities:
+        for entity in message.entities:
+            if entity.type == "text_link" and "docsend.com" in entity.url.lower():
+                docsend_links.append(entity.url)
+
+    if message.caption_entities:
+        for entity in message.caption_entities:
+            if entity.type == "text_link" and "docsend.com" in entity.url.lower():
+                docsend_links.append(entity.url)
+
+    return docsend_links

@@ -12,6 +12,8 @@ RUN apt-get update && \
     libjpeg-dev \
     zlib1g-dev \
     libpng-dev \
+    libtiff-dev \
+    libfreetype6-dev \
     tesseract-ocr && \
     pip install --no-cache-dir -r requirements.txt && \
     apt-get remove -y gcc && \

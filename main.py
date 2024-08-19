@@ -3,8 +3,15 @@ import os
 from src.api.webhook import set_webhook, create_app
 from telegram.ext import ApplicationBuilder
 from src.bot.telegram_bot import setup_bot
-from src.bot.message_handler import add_handlers
+from src.bot.message_handler import handle_message, handle_reply, export_csv
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+import logging
 
+def add_handlers(application: Application):
+    logging.info("Adding handlers")
+    application.add_handler(MessageHandler(filters.REPLY & filters.TEXT, handle_reply))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
+    application.add_handler(CommandHandler('export_csv', export_csv))
 async def main():
     bot = setup_bot()
     application = ApplicationBuilder().token(bot.token).build()
@@ -23,3 +30,5 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
+

@@ -32,7 +32,6 @@ async def handle_message(update: Update, context: CallbackContext):
         return
 
     missing_fields = [field for field in CSV_FIELDNAMES if not details.get(field)]
-    await save_to_csv(details)
     
     if missing_fields:
         missing_fields_str = "\n".join(missing_fields)

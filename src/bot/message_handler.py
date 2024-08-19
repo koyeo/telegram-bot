@@ -7,15 +7,9 @@ import os
 from src.bot.telegram_bot import setup_bot
 from src.ai.gpt_formatter import format_message_with_gpt
 from tenacity import retry, stop_after_attempt, wait_exponential
+from config import CSV_FIELDNAMES
 
 bot = setup_bot()
-
-# Define the expected fields
-EXPECTED_FIELDS = [
-    'Deal ID', 'Account Name / PortCo', 'Deal Name', 'Stage', 'Account Description',
-    'Website', 'Deck', 'Fundraise Amount($USD)', 'Equity Valuation/Cap', 'Token Valuation',
-    'Round', 'Deal Source'
-]
 
 missing_fields_tracker = {}
 
@@ -37,7 +31,7 @@ async def handle_message(update: Update, context: CallbackContext):
         logging.error(f"Error: {error_message}")
         return
 
-    missing_fields = [field for field in EXPECTED_FIELDS if not details.get(field)]
+    missing_fields = [field for field in CSV_FIELDNAMES if not details.get(field)]
     await save_to_csv(details)
     
     if missing_fields:
@@ -73,7 +67,6 @@ async def handle_reply(update: Update, context: CallbackContext):
             details[field] = value
 
     await save_to_csv(details)
-    logging.info("Updated deal details saved to CSV.")
 
     remaining_missing_fields = [field for field in tracked_info['missing_fields'] if not details.get(field)]
     

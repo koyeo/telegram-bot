@@ -1,17 +1,19 @@
 import requests
+from requests.exceptions import HTTPError
 from bs4 import BeautifulSoup
 import logging
 import os
 import fitz
 from PIL import Image
 import pytesseract
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import re
 import json
 import html
 from functools import wraps
 from src.ai.gpt_formatter import generate_title_with_gpt, sanitize_filename
 import asyncio
+import time
 
 def error_handler(func):
     @wraps(func)
@@ -56,7 +58,7 @@ async def extract_docsend_content(url, email, passcode=''):
 
         return combined_text, pdf_paths
 
-    except requests.exceptions.HTTPError as e:
+    except HTTPError as e:
         logging.error(f"Failed to access or authenticate at {url}: {e} | Response: {e.response.text}")
         raise
     except Exception as e:
@@ -90,7 +92,7 @@ def authenticate(session, url, email, passcode, soup):
         auth_response.raise_for_status()
         logging.info(f"Authenticated with email: {email} for URL: {url}")
         return BeautifulSoup(auth_response.text, 'html.parser')
-    except requests.exceptions.HTTPError as e:
+    except HTTPError as e:
         if "Please verify that you own the entered email address" in e.response.text:
             logging.error(f"Email verification required for {email}. Please check your email inbox.")
             raise ValueError(f"Email verification required for {email}. Please check your email inbox.")
@@ -102,6 +104,14 @@ def authenticate(session, url, email, passcode, soup):
 
 async def process_docsend_document(session, url, email, passcode, safe_doc_name):
     logging.info(f"Processing URL: {url}")
+    try:
+        response = session.get(url, allow_redirects=True)
+        logging.info(f"DocSend document response status: {response.status_code}")
+        logging.info(f"DocSend document final URL after redirects: {response.url}")
+        logging.debug(f"DocSend document response content: {response.text[:1000]}")
+    except Exception as e:
+        logging.error(f"Failed to process document at {url}: {e}")
+        return "", None
 
     document_text, temp_pdf_path = await handle_single_document(url, email, passcode, safe_doc_name)
     return document_text, temp_pdf_path
@@ -144,8 +154,12 @@ async def handle_single_document(url, email, passcode, doc_name=None):
     
     temp_pdf_path = os.path.join(temp_pdf_dir, f'{doc_name}.pdf') if doc_name else os.path.join(temp_pdf_dir, 'temp_docsend.pdf')
 
-    kwargs = generate_pdf_from_docsend_url(url, email, passcode, searchable=True)
-    
+    kwargs = await generate_pdf_with_retry(url, email, passcode)
+
+    if kwargs is None or not isinstance(kwargs, dict):  # Ensure kwargs is a valid dictionary
+        logging.error("Failed to generate PDF; invalid response received.")
+        return "", ""  # Return empty strings if PDF generation fails
+
     with open(temp_pdf_path, 'wb') as f:
         f.write(kwargs['content'])
     
@@ -165,7 +179,27 @@ async def handle_single_document(url, email, passcode, doc_name=None):
         os.rename(temp_pdf_path, new_temp_pdf_path)
         temp_pdf_path = new_temp_pdf_path
 
-    return normalized_text + "\n", temp_pdf_path  
+    return normalized_text + "\n", temp_pdf_path
+
+async def generate_pdf_with_retry(url, email, passcode, max_retries=2, delay=3):
+    retries = 0
+    while retries < max_retries:
+        try:
+            kwargs = generate_pdf_from_docsend_url(url, email, passcode)
+            return kwargs
+        except HTTPError as e:
+            if e.response.status_code == 404:  # Fast-fail on 404
+                logging.error(f"docsend2pdf_translate failed with status: 404. Skipping document.")
+                return None
+            if e.response.status_code == 504:
+                retries += 1
+                logging.warning(f"Retry {retries}/{max_retries} after receiving 504 error. Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)  # Use asyncio.sleep for async delay
+            else:
+                logging.error(f"docsend2pdf_translate failed with status: {e.response.status_code}")
+                break
+    logging.error(f"Failed to generate PDF after {max_retries} attempts.")
+    return None  # Return None to indicate failure
 
 
 @error_handler
@@ -200,8 +234,10 @@ def docsend2pdf_translate(url, csrfmiddlewaretoken, csrftoken, email, passcode='
         if searchable:
             data['searchable'] = 'on'
         response = session.post('https://docsend2pdf.com', headers=headers, data=data, allow_redirects=True, timeout=60)
+        logging.info(f"docsend2pdf_translate response status: {response.status_code}")
         response.raise_for_status()
         return {'content': response.content, 'headers': {'Content-Type': response.headers['Content-Type'], 'Content-Disposition': response.headers.get('Content-Disposition', f'inline; filename="{url}.pdf"')}}
+
 
 @error_handler
 def extract_text_from_pdf(file_path):
@@ -246,7 +282,6 @@ def normalize_text(text):
 
     # Strip leading and trailing whitespace
     return text.strip()
-
 
 def is_valid_docsend_document(session, url):
     if 'docsend.com' not in url or '/view/' not in url:

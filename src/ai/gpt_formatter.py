@@ -2,6 +2,7 @@ import openai
 import logging
 import re
 import json
+from config import CSV_FIELDNAMES  # Assuming CSV_FIELDNAMES is imported
 
 client = openai.OpenAI()
 
@@ -12,22 +13,7 @@ def format_message_with_gpt(message_text, expected_fields=None, mode='format'):
             "description": "Format a Telegram message into a structured deal flow record",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "Deal ID": {"type": "string"},
-                    "Account Name / PortCo": {"type": "string"},
-                    "Record Type ID": {"type": "string"},
-                    "Deal Name": {"type": "string"},
-                    "Stage": {"type": "string"},
-                    "Account Description": {"type": "string"},
-                    "Website": {"type": "string"},
-                    "Deck": {"type": "string"},
-                    "Fundraise Amount($USD)": {"type": "string"},
-                    "Equity Valuation/Cap": {"type": "string"},
-                    "Token Valuation": {"type": "string"},
-                    "CMT Relationship Owner": {"type": "string"},
-                    "Sharepoint Link": {"type": "string"},
-                    "Round": {"type": "string"}
-                },
+                "properties": {field: {"type": "string"} for field in CSV_FIELDNAMES},  # Use CSV_FIELDNAMES
                 "required": ["Account Name / PortCo", "Record Type ID", "Deal Name", "Stage", "Account Description"]
             }
         }
@@ -39,6 +25,7 @@ def format_message_with_gpt(message_text, expected_fields=None, mode='format'):
         For 'Account Description' please provide information on what the company/project does.
         For 'Account Name / Portco' find the name of the company or project based on the context provided. 
         Format monetary values in $X,XXX,XXX format.
+        For 'Sector' please categorize as one or more of the following sectors: DePIN,Stablecoins,Payments,Security,Wallet,AI/ML,Database,Account Abstraction,Storage,Privacy Preserving tech,Data Availability,Settlement,Tooling,Prediction Markets,RWA,Analytics,Memecoins,Liquid Staking,Consumer App,Market Making,Compliance,Rollup Frameworks,PKI,Social,Interoperability,Asset Management,DEX,Audit,Intents,Oracle,Centralized Finance,MEV,Derivatives,Insurance,Identity,Sequencer,L2,NFT,Enterprise Blockchains,Consultancy,Gaming,Commerce,Hardware,Borrow/Lending,L1,Mining,Ordinals,Crowdfunding,Creator Tools,Governance,Metaverse,DAO
         Message: {message_text}
         """
     elif mode == 'parse':
@@ -124,4 +111,3 @@ def generate_title_with_gpt(message_text):
 def sanitize_filename(filename):
     """Sanitize a filename to remove/replace unsafe characters."""
     return re.sub(r'[^\w\-_. ]', '_', filename).strip()
-    

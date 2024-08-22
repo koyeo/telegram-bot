@@ -13,7 +13,7 @@ from src.data.docsend_extract import extract_docsend_content
 def add_handlers(application: Application):
     logging.info("Adding handlers")
     application.add_handler(MessageHandler(filters.REPLY & filters.TEXT, handle_reply))
-    application.add_handler(MessageHandler(filters.ALL & filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     application.add_handler(CommandHandler('export_csv', export_csv))
 async def main():
     # combined_text, pdf_paths = await extract_docsend_content('https://docsend.com/view/6e6u6jhng897d5v5','lam92007@gmail.com','')
